@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Pipeline de Procesamiento y Machine Learning para Archivos Excel.
+
+# ===============================================
+# 1. Definición de Recursos
+# ===============================================
+Resources:
+
+  # -- 1.1 S3 Buckets (Data - Cruda, Data - Limpia) --
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: data-cruda-excel-bucket # Donde se cargan los archivos (1)
+      AccessControl: Private
+
+  CleanDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: data-limpia-ml-ready-bucket # Datos listos para el ML (3)
+      AccessControl: Private
+
+  # -- 1.2 AWS Lambda (Limpieza) --
+  CleaningFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler # Asumimos un script index.py con función handler
+      Runtime: python3.9
+      CodeUri: src/limpieza_app/ # Directorio donde reside el código de Limpieza
+      MemorySize: 512
+      Timeout: 300
+      Policies:
+        # Permisos para leer desde Cruda y escribir en Limpia
+        - S3ReadWritePolicy:
+            BucketName: !Ref RawDataBucket
+        - S3WritePolicy:
+            BucketName: !Ref CleanDataBucket
+      
+  # -- 1.3 Step Functions (Orquestación del Flujo) --
+  DataProcessingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionSubstitutions:
+        CleaningFunctionArn: !GetAtt CleaningFunction.Arn
+        CleanBucketName: !Ref CleanDataBucket
+      Definition:
+        StartAt: LimpiezaDeDatos
+        States:
+          # (1) Se recibe el evento (carga de archivo) y se inicia la limpieza
+          LimpiezaDeDatos:
+            Type: Task
+            Resource: !GetAtt CleaningFunction.Arn
+            Next: AlmacenarDatosLimpios
+            Parameters:
+              input_file_location.$: "$.s3_key"
+          
+          # (2) El flujo lógico guarda la salida de Lambda en S3 (Data - Limpia)
+          AlmacenarDatosLimpios:
+            Type: Pass # Representa el almacenamiento en el S3 Data - Limpia
+            Next: InvocarModeloML
+            ResultPath: "$.cleaned_data_location"
+
+          # (3) Se invoca la función o servicio que contiene el Modelo ML
+          InvocarModeloML:
+            Type: Pass # Simplificado: Representa la invocación al Modelo ML (4)
+            Next: GenerarVisualizacion
+
+          # (4) Flujo termina para ser consumido por el Dashboard
+          GenerarVisualizacion:
+            Type: Pass # Representa el flujo hacia la Visualización (5)
+            End: true
+
+      # Definición de Rol y Permisos para Step Functions
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+              - s3:PutObject
+              - s3:GetObject
+            Resource: "*"
