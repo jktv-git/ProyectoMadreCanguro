@@ -25,9 +25,9 @@ Resources:
   CleaningFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: index.handler # Asumimos un script index.py con función handler
+      Handler: index.handler 
       Runtime: python3.9
-      CodeUri: src/limpieza_app/ # Directorio donde reside el código de Limpieza
+      CodeUri: src/limpieza_app/ 
       MemorySize: 512
       Timeout: 300
       Policies:
